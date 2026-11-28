@@ -39,17 +39,7 @@ def mask (use0 use4 use5 : Bool) : Nat :=
 def restMask (use0 use4 use5 : Bool) : Nat :=
   (if use0 then 0 else 1) + (if use4 then 0 else 16) + (if use5 then 0 else 32)
 
-/-- A pair of readings that differ in output and agree outside the shared wire
-forces two distinct values of that wire. -/
-theorem wire_separates {inside outside : Nat} {wire : Nat → Bool} {out : Nat → Bool → Bool}
-    (fit : ∀ r ∈ rows, out (outside &&& r) (wire (inside &&& r)) = target r)
-    {a b : Nat} (ha : a ∈ rows) (hb : b ∈ rows)
-    (same : outside &&& a = outside &&& b) (different : target a ≠ target b) :
-    wire (inside &&& a) ≠ wire (inside &&& b) := by
-  intro h
-  apply different
-  rw [← fit a ha, ← fit b hb, same, h]
-
+/-- Monotone Boolean values that differ on an increasing input must rise. -/
 theorem growing_values {wire : Nat → Bool} (grow : PreservesGrowth wire)
     {a b : Nat} (subset : a &&& b = a) (different : wire a ≠ wire b) :
     wire a = false ∧ wire b = true := by
@@ -58,94 +48,12 @@ theorem growing_values {wire : Nat → Bool} (grow : PreservesGrowth wire)
     cases h' : wire b <;> simp_all
   · exact False.elim (different (h.trans (grow a b subset h).symm))
 
-theorem shared_excludes_five (use0 use4 : Bool) (wire : Nat → Bool)
-    (grow : PreservesGrowth wire) (out : Nat → Bool → Bool)
-    (fit : ∀ r ∈ rows, out (restMask use0 use4 true &&& r)
-      (wire (mask use0 use4 true &&& r)) = target r) : False := by
-  have before : wire 0 ≠ wire 32 := by
-    cases use0 <;> cases use4 <;>
-      exact wire_separates fit (a := 8) (b := 40) (by decide) (by decide) (by decide) (by decide)
-  have after : wire 32 ≠ wire 34 := by
-    cases use0 <;> cases use4 <;>
-      exact wire_separates fit (a := 32) (b := 34) (by decide) (by decide) (by decide) (by decide)
-  have hi := (growing_values grow (by decide : 0 &&& 32 = 0) before).2
-  have lo := (growing_values grow (by decide : 32 &&& 34 = 32) after).1
-  exact Bool.noConfusion (hi.symm.trans lo)
-
-theorem shared_excludes_zero (use4 : Bool) (wire : Nat → Bool)
-    (grow : PreservesGrowth wire) (out : Nat → Bool → Bool)
-    (fit : ∀ r ∈ rows, out (restMask true use4 false &&& r)
-      (wire (mask true use4 false &&& r)) = target r) : False := by
-  have h0 : wire 0 ≠ wire 1 := by
-    cases use4 <;>
-      exact wire_separates fit (a := 32) (b := 33) (by decide) (by decide) (by decide) (by decide)
-  have h1 : wire 0 ≠ wire 2 := by
-    cases use4 <;>
-      exact wire_separates fit (a := 32) (b := 34) (by decide) (by decide) (by decide) (by decide)
-  have h0 := (growing_values grow (by decide : 0 &&& 1 = 0) h0).2
-  have h1 := (growing_values grow (by decide : 0 &&& 2 = 0) h1).2
-  cases use4
-  · have different : wire 1 ≠ wire 2 :=
-      wire_separates fit (a := 17) (b := 18) (by decide) (by decide) (by decide) (by decide)
-    exact different (h0.trans h1.symm)
-  · have different : wire 17 ≠ wire 18 :=
-      wire_separates fit (a := 17) (b := 18) (by decide) (by decide) (by decide) (by decide)
-    exact different ((grow 1 17 (by decide) h0).trans (grow 2 18 (by decide) h1).symm)
-
-theorem shared_excludes_four (wire : Nat → Bool)
-    (grow : PreservesGrowth wire) (out : Nat → Bool → Bool)
-    (fit : ∀ r ∈ rows, out (restMask false true false &&& r)
-      (wire (mask false true false &&& r)) = target r) : False := by
-  have before : wire 0 ≠ wire 2 :=
-    wire_separates fit (a := 32) (b := 34) (by decide) (by decide) (by decide) (by decide)
-  have after : wire 2 ≠ wire 18 :=
-    wire_separates fit (a := 2) (b := 18) (by decide) (by decide) (by decide) (by decide)
-  have hi := (growing_values grow (by decide : 0 &&& 2 = 0) before).2
-  have lo := (growing_values grow (by decide : 2 &&& 18 = 2) after).1
-  exact Bool.noConfusion (hi.symm.trans lo)
-
-/-- The only surviving shared wire is OR of inputs 1 and 2. -/
-theorem shared_is_or (use0 use4 use5 : Bool) (wire : Nat → Bool)
-    (grow : PreservesGrowth wire) (out : Nat → Bool → Bool)
-    (fit : ∀ r ∈ rows, out (restMask use0 use4 use5 &&& r)
-      (wire (mask use0 use4 use5 &&& r)) = target r) :
-    use0 = false ∧ use4 = false ∧ use5 = false ∧
-    wire 0 = false ∧ wire 2 = true ∧ wire 4 = true ∧ wire 6 = true := by
-  cases use5
-  · cases use0
-    · cases use4
-      · have h1 : wire 0 ≠ wire 2 :=
-          wire_separates fit (a := 32) (b := 34) (by decide) (by decide) (by decide) (by decide)
-        have h2 : wire 0 ≠ wire 4 :=
-          wire_separates fit (a := 32) (b := 36) (by decide) (by decide) (by decide) (by decide)
-        have values1 := growing_values grow (by decide : 0 &&& 2 = 0) h1
-        have values2 := growing_values grow (by decide : 0 &&& 4 = 0) h2
-        exact ⟨rfl, rfl, rfl, values1.1, values1.2, values2.2, grow 2 6 (by decide) values1.2⟩
-      · exact (shared_excludes_four wire grow out fit).elim
-    · exact (shared_excludes_zero use4 wire grow out fit).elim
-  · exact (shared_excludes_five use0 use4 wire grow out fit).elim
-
 /-- A monotone Boolean map that takes both values is the identity. -/
 theorem increasing_values (f : Bool → Bool) (hf : f false = true → f true = true)
     {a b : Bool} (ha : f a = false) (hb : f b = true) : a = false ∧ b = true := by
   cases a <;> cases b <;> simp_all
 
-/-- Four rows give a contradiction for the surviving shared wire. -/
-theorem no_four_rows (before after : Bool → Bool → Bool → Bool)
-    (incBefore : before false false true = true → before true false true = true)
-    (incAfter : ∀ a z, after a z false = true → after a z true = true)
-    (h8 : after false false (!(before false false false)) = true)
-    (h32 : after false false (!(before false false true)) = false)
-    (h18 : after false true (!(before true true false)) = false)
-    (h34 : after false true (!(before true false true)) = true) : False := by
-  have neg0 := (increasing_values (after false false) (incAfter false false) h32 h8).1
-  have neg1 := (increasing_values (after false true) (incAfter false true) h18 h34).2
-  have lo : before false false true = true := by simpa using neg0
-  have hi : before true false true = false := by simpa using neg1
-  exact Bool.noConfusion ((incBefore lo).symm.trans hi)
-
-/-- No factorization of the indicated shape realizes the promised truth table.
-The circuit-to-factorization step is separate from this truth-table proof. -/
+/-- Four promised rows rule out the factorization, whether or not input 5 is shared. -/
 theorem no_shared_factorization (use0 use4 use5 : Bool) (wire : Nat → Bool)
     (grow : PreservesGrowth wire) (before after : Bool → Bool → Bool → Bool)
     (incBefore : before false false true = true → before true false true = true)
@@ -155,20 +63,50 @@ theorem no_shared_factorization (use0 use4 use5 : Bool) (wire : Nat → Bool)
       let z := wire (mask use0 use4 use5 &&& r)
       after (outside.testBit 0) z (!(before z (outside.testBit 4) (outside.testBit 5))) =
         target r) : False := by
-  let out (outside : Nat) (z : Bool) :=
-    after (outside.testBit 0) z (!(before z (outside.testBit 4) (outside.testBit 5)))
-  obtain ⟨rfl, rfl, rfl, hzero, hone, _, _⟩ := shared_is_or use0 use4 use5 wire grow out fit
-  have h8 := fit 8 (by decide)
-  have h32 := fit 32 (by decide)
-  have h18 := fit 18 (by decide)
-  have h34 := fit 34 (by decide)
-  change after false (wire 0) (!(before (wire 0) false false)) = true at h8
-  change after false (wire 0) (!(before (wire 0) false true)) = false at h32
-  change after false (wire 2) (!(before (wire 2) true false)) = false at h18
-  change after false (wire 2) (!(before (wire 2) false true)) = true at h34
-  rw [hzero] at h8 h32
-  rw [hone] at h18 h34
-  exact no_four_rows before after incBefore incAfter h8 h32 h18 h34
+  have h8 : after false (wire 0) (!(before (wire 0) false false)) = true := by
+    cases use0 <;> cases use4 <;> cases use5 <;> exact fit 8 (by decide)
+  cases use5
+  · -- Input 5 is outside. Rows 32 and 34 force the shared value to rise.
+    have h32 : after false (wire 0) (!(before (wire 0) false true)) = false := by
+      cases use0 <;> cases use4 <;> exact fit 32 (by decide)
+    have h34 : after false (wire 2) (!(before (wire 2) false true)) = true := by
+      cases use0 <;> cases use4 <;> exact fit 34 (by decide)
+    have different : wire 0 ≠ wire 2 := by
+      intro same
+      rw [same, h34] at h32
+      contradiction
+    obtain ⟨zero, two⟩ := growing_values grow (by decide : 0 &&& 2 = 0) different
+    rw [zero] at h8 h32
+    rw [two] at h34
+    have negative : ∃ inv, after false true inv = false := by
+      cases use4
+      · have h18 : after false (wire 2) (!(before (wire 2) true false)) = false := by
+          cases use0 <;> exact fit 18 (by decide)
+        rw [two] at h18
+        exact ⟨_, h18⟩
+      · have h18 : after false (wire 18) (!(before (wire 18) false false)) = false := by
+          cases use0 <;> exact fit 18 (by decide)
+        rw [grow 2 18 (by decide) two] at h18
+        exact ⟨_, h18⟩
+    obtain ⟨inv, h18⟩ := negative
+    have lo := (increasing_values (after false false) (incAfter false false) h32 h8).1
+    have hi := (increasing_values (after false true) (incAfter false true) h18 h34).2
+    have lo' : before false false true = true := by simpa using lo
+    have hi' : before true false true = false := by simpa using hi
+    exact Bool.noConfusion ((incBefore lo').symm.trans hi')
+  · -- Input 5 is shared. Rows 32 and 34 must have the same shared value.
+    have h32 : after false (wire 32) (!(before (wire 32) false false)) = false := by
+      cases use0 <;> cases use4 <;> exact fit 32 (by decide)
+    have h34 : after false (wire 34) (!(before (wire 34) false false)) = true := by
+      cases use0 <;> cases use4 <;> exact fit 34 (by decide)
+    have different : wire 0 ≠ wire 32 := by
+      intro same
+      rw [same, h32] at h8
+      contradiction
+    have high := (growing_values grow (by decide : 0 &&& 32 = 0) different).2
+    rw [high] at h32
+    rw [grow 32 34 (by decide) high, h32] at h34
+    contradiction
 
 /-- A promised input edge is an allowed single-input toggle. -/
 abbrev promisedEdge (i : Fin 6) (low : Fin 64) : Prop :=
