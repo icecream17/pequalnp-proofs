@@ -29,85 +29,6 @@ theorem target_matches (i j : Fin 6) :
   revert i j
   decide
 
-def PreservesGrowth (f : Nat → Bool) : Prop :=
-  ∀ a b, a &&& b = a → f a = true → f b = true
-
-/-- Candidate inputs to the shared wire. Inputs 1 and 2 are mandatory. -/
-def mask (use0 use4 use5 : Bool) : Nat :=
-  6 + (if use0 then 1 else 0) + (if use4 then 16 else 0) + (if use5 then 32 else 0)
-
-def restMask (use0 use4 use5 : Bool) : Nat :=
-  (if use0 then 0 else 1) + (if use4 then 0 else 16) + (if use5 then 0 else 32)
-
-/-- Monotone Boolean values that differ on an increasing input must rise. -/
-theorem growing_values {wire : Nat → Bool} (grow : PreservesGrowth wire)
-    {a b : Nat} (subset : a &&& b = a) (different : wire a ≠ wire b) :
-    wire a = false ∧ wire b = true := by
-  cases h : wire a
-  · refine ⟨rfl, ?_⟩
-    cases h' : wire b <;> simp_all
-  · exact False.elim (different (h.trans (grow a b subset h).symm))
-
-/-- A monotone Boolean map that takes both values is the identity. -/
-theorem increasing_values (f : Bool → Bool) (hf : f false = true → f true = true)
-    {a b : Bool} (ha : f a = false) (hb : f b = true) : a = false ∧ b = true := by
-  cases a <;> cases b <;> simp_all
-
-/-- Four promised rows rule out the factorization, whether or not input 5 is shared. -/
-theorem no_shared_factorization (use0 use4 use5 : Bool) (wire : Nat → Bool)
-    (grow : PreservesGrowth wire) (before after : Bool → Bool → Bool → Bool)
-    (incBefore : before false false true = true → before true false true = true)
-    (incAfter : ∀ a z, after a z false = true → after a z true = true)
-    (fit : ∀ r ∈ rows,
-      let outside := restMask use0 use4 use5 &&& r
-      let z := wire (mask use0 use4 use5 &&& r)
-      after (outside.testBit 0) z (!(before z (outside.testBit 4) (outside.testBit 5))) =
-        target r) : False := by
-  have h8 : after false (wire 0) (!(before (wire 0) false false)) = true := by
-    cases use0 <;> cases use4 <;> cases use5 <;> exact fit 8 (by decide)
-  cases use5
-  · -- Input 5 is outside. Rows 32 and 34 force the shared value to rise.
-    have h32 : after false (wire 0) (!(before (wire 0) false true)) = false := by
-      cases use0 <;> cases use4 <;> exact fit 32 (by decide)
-    have h34 : after false (wire 2) (!(before (wire 2) false true)) = true := by
-      cases use0 <;> cases use4 <;> exact fit 34 (by decide)
-    have different : wire 0 ≠ wire 2 := by
-      intro same
-      rw [same, h34] at h32
-      contradiction
-    obtain ⟨zero, two⟩ := growing_values grow (by decide : 0 &&& 2 = 0) different
-    rw [zero] at h8 h32
-    rw [two] at h34
-    have negative : ∃ inv, after false true inv = false := by
-      cases use4
-      · have h18 : after false (wire 2) (!(before (wire 2) true false)) = false := by
-          cases use0 <;> exact fit 18 (by decide)
-        rw [two] at h18
-        exact ⟨_, h18⟩
-      · have h18 : after false (wire 18) (!(before (wire 18) false false)) = false := by
-          cases use0 <;> exact fit 18 (by decide)
-        rw [grow 2 18 (by decide) two] at h18
-        exact ⟨_, h18⟩
-    obtain ⟨inv, h18⟩ := negative
-    have lo := (increasing_values (after false false) (incAfter false false) h32 h8).1
-    have hi := (increasing_values (after false true) (incAfter false true) h18 h34).2
-    have lo' : before false false true = true := by simpa using lo
-    have hi' : before true false true = false := by simpa using hi
-    exact Bool.noConfusion ((incBefore lo').symm.trans hi')
-  · -- Input 5 is shared. Rows 32 and 34 must have the same shared value.
-    have h32 : after false (wire 32) (!(before (wire 32) false false)) = false := by
-      cases use0 <;> cases use4 <;> exact fit 32 (by decide)
-    have h34 : after false (wire 34) (!(before (wire 34) false false)) = true := by
-      cases use0 <;> cases use4 <;> exact fit 34 (by decide)
-    have different : wire 0 ≠ wire 32 := by
-      intro same
-      rw [same, h32] at h8
-      contradiction
-    have high := (growing_values grow (by decide : 0 &&& 32 = 0) different).2
-    rw [high] at h32
-    rw [grow 32 34 (by decide) high, h32] at h34
-    contradiction
-
 /-- A promised input edge is an allowed single-input toggle. -/
 abbrev promisedEdge (i : Fin 6) (low : Fin 64) : Prop :=
   low.val ∈ rows ∧ low.val.testBit i.val = false ∧
@@ -116,115 +37,17 @@ abbrev promisedEdge (i : Fin 6) (low : Fin 64) : Prop :=
 theorem five_essential (i : Fin 6) (hi : i ≠ 3) :
     ∃ low : Fin 64, promisedEdge i low ∧
       target low.val ≠ target (low.val ||| (2 ^ i.val)) := by
-  have cases_i : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 4 ∨ i = 5 := by
-    have hne : i.val ≠ 3 := by
-      intro h
-      exact hi (Fin.ext h)
-    have hbound := i.isLt
-    have h : i.val = 0 ∨ i.val = 1 ∨ i.val = 2 ∨ i.val = 4 ∨ i.val = 5 := by omega
-    rcases h with h | h | h | h | h
-    · exact Or.inl (Fin.ext h)
-    · exact Or.inr (Or.inl (Fin.ext h))
-    · exact Or.inr (Or.inr (Or.inl (Fin.ext h)))
-    · exact Or.inr (Or.inr (Or.inr (Or.inl (Fin.ext h))))
-    · exact Or.inr (Or.inr (Or.inr (Or.inr (Fin.ext h))))
-  rcases cases_i with rfl | rfl | rfl | rfl | rfl
-  · exact ⟨32, by decide⟩
-  · exact ⟨32, by decide⟩
-  · exact ⟨32, by decide⟩
-  · exact ⟨2, by decide⟩
-  · exact ⟨8, by decide⟩
+  revert i
+  decide +kernel
 
 theorem two_binates (i : Fin 6) (hi : i = 1 ∨ i = 2) :
     ∃ rising falling : Fin 64,
       promisedEdge i rising ∧ promisedEdge i falling ∧
       target rising.val = false ∧ target (rising.val ||| (2 ^ i.val)) = true ∧
       target falling.val = true ∧ target (falling.val ||| (2 ^ i.val)) = false := by
-  rcases hi with rfl | rfl
-  · exact ⟨32, 16, by decide⟩
-  · exact ⟨32, 16, by decide⟩
-
-/-- The degree count once the live cone is represented by its effective wires.
-Here surplus is the total excess use count above one use per non-output vertex. -/
-theorem degree_budget (inputs binary unary nullary surplus : Nat)
-    (hinputs : 5 ≤ inputs) (hnot : 1 ≤ unary)
-    (hbudget : binary + unary + nullary ≤ 6)
-    (hsharing : 1 ≤ surplus)
-    (hedges : 2 * binary + unary + 1 = inputs + binary + unary + nullary + surplus) :
-    inputs = 5 ∧ binary = 5 ∧ unary = 1 ∧ nullary = 0 ∧ surplus = 1 := by
-  omega
-
-/-- Reconcile incoming edge counts with the uses of every non-output live
-vertex. Each such vertex already contributes one use. -/
-theorem uses_sum (uses : List Nat) (live : ∀ k ∈ uses, 1 ≤ k) :
-    uses.sum = uses.length + (uses.map (fun k => k - 1)).sum := by
-  induction uses with
-  | nil => rfl
-  | cons k ks ih =>
-    have hk := live k (by simp)
-    have hks := ih (fun j hj => live j (by simp [hj]))
-    simp only [List.sum_cons, List.length_cons, List.map_cons]
-    omega
-
-theorem surplus_positive (uses : List Nat) {k : Nat} (hk : k ∈ uses) (many : 2 ≤ k) :
-    1 ≤ (uses.map (fun j => j - 1)).sum := by
-  induction uses with
-  | nil => simp at hk
-  | cons a as ih =>
-    simp only [List.mem_cons] at hk
-    simp only [List.map_cons, List.sum_cons]
-    rcases hk with rfl | h
-    · omega
-    · have := ih h
-      omega
-
-/-- A use list with surplus one consists of one double use and single uses. -/
-theorem one_double_use (uses : List Nat) (live : ∀ k ∈ uses, 1 ≤ k)
-    (surplus : (uses.map (fun k => k - 1)).sum = 1) :
-    ∃ left right : List Nat, uses = left ++ [2] ++ right ∧
-      (∀ x ∈ left, x = 1) ∧ (∀ x ∈ right, x = 1) := by
-  induction uses with
-  | nil => simp at surplus
-  | cons k ks ih =>
-    have hk := live k (by simp)
-    have liveTail : ∀ j ∈ ks, 1 ≤ j := fun j hj => live j (by simp [hj])
-    simp only [List.map_cons, List.sum_cons] at surplus
-    by_cases h : k = 1
-    · have tailSurplus : (ks.map (fun k => k - 1)).sum = 1 := by omega
-      obtain ⟨left, right, hks, hl, hr⟩ := ih liveTail tailSurplus
-      refine ⟨k :: left, right, ?_, ?_, hr⟩
-      · simp [hks]
-      · intro x hx
-        rcases List.mem_cons.mp hx with heq | hm
-        · exact heq.trans h
-        · exact hl x hm
-    · have htwo : k = 2 := by omega
-      refine ⟨[], ks, by simp [htwo], by simp, ?_⟩
-      intro x hx
-      have hxlo := liveTail x hx
-      by_cases hn : x = 1
-      · exact hn
-      · have hxhi : 2 ≤ x := by omega
-        have ht := surplus_positive ks hx hxhi
-        omega
-
-theorem live_cone_budget (inputs binary unary nullary : Nat) (uses : List Nat)
-    (hinputs : 5 ≤ inputs) (hnot : 1 ≤ unary)
-    (hbudget : binary + unary + nullary ≤ 6)
-    (live : ∀ k ∈ uses, 1 ≤ k) (shared : ∃ k ∈ uses, 2 ≤ k)
-    (vertices : uses.length + 1 = inputs + binary + unary + nullary)
-    (edges : uses.sum = 2 * binary + unary) :
-    inputs = 5 ∧ binary = 5 ∧ unary = 1 ∧ nullary = 0 ∧
-    ∃ left right : List Nat, uses = left ++ [2] ++ right ∧
-      (∀ x ∈ left, x = 1) ∧ (∀ x ∈ right, x = 1) := by
-  obtain ⟨k, hk, hmany⟩ := shared
-  have hUses := uses_sum uses live
-  have hsur := surplus_positive uses hk hmany
-  have hcount : 2 * binary + unary + 1 =
-      inputs + binary + unary + nullary + (uses.map (fun k => k - 1)).sum := by omega
-  obtain ⟨hi, hb, hu, hz, hs⟩ :=
-    degree_budget inputs binary unary nullary _ hinputs hnot hbudget hsur hcount
-  exact ⟨hi, hb, hu, hz, one_double_use uses live hs⟩
+  refine ⟨32, 16, ?_⟩
+  revert i
+  decide +kernel
 
 /-- A signed path, oriented from an input towards the output. Each edge
 inherits the sign of the gate that consumes the wire. -/
@@ -280,27 +103,15 @@ theorem SignedPath.diverges_with_suffixes {edge : Nat → Nat → Prop} {negates
       · exact ⟨a, b, c, same, link, link', true, _, _, .done,
           .next link tail, .next link' tail', different⟩
 
-theorem SignedPath.reaches_branch {edge : Nat → Nat → Prop} {negates : Nat → Bool}
-    {root a : Nat} {sign other : Bool}
-    (p : SignedPath edge negates root a sign) (q : SignedPath edge negates root a other)
-    (forward : ∀ i j, edge i j → i < j) (different : sign ≠ other) :
-    ∃ branch left right : Nat, left ≠ right ∧ edge branch left ∧ edge branch right ∧
-      ∃ prefixSign : Bool, SignedPath edge negates branch a prefixSign := by
-  obtain ⟨branch, left, right, ne, e₁, e₂, sign, _, _, pref, _, _, _⟩ :=
-    p.diverges_with_suffixes q forward different
-  exact ⟨branch, left, right, ne, e₁, e₂, sign, pref⟩
-
 theorem SignedPath.reaches_unique_branch {edge : Nat → Nat → Prop} {negates : Nat → Bool}
-    {root a shared : Nat}
-    (p : SignedPath edge negates root a true) (q : SignedPath edge negates root a false)
-    (forward : ∀ i j, edge i j → i < j)
+    {root a shared : Nat} (p : SignedPath edge negates root a true)
+    (q : SignedPath edge negates root a false) (forward : ∀ i j, edge i j → i < j)
     (unique : ∀ v l r, l ≠ r → edge v l → edge v r → v = shared) :
     ∃ sign, SignedPath edge negates shared a sign := by
-  obtain ⟨branch, l, r, ne, e₁, e₂, sign, path⟩ := p.reaches_branch q forward (by decide)
-  cases unique branch l r ne e₁ e₂
-  exact ⟨sign, path⟩
+  obtain ⟨branch, l, r, ne, el, er, sign, _, _, initialPath, _, _, _⟩ :=
+    p.diverges_with_suffixes q forward (by decide)
+  exact ⟨sign, unique branch l r ne el er ▸ initialPath⟩
 
-/-- Extend a path by one consuming gate at its output end. -/
 theorem SignedPath.snoc {edge : Nat → Nat → Prop} {negates : Nat → Bool}
     {root a b : Nat} {sign : Bool}
     (path : SignedPath edge negates root a sign) (link : edge root b) :
@@ -412,18 +223,6 @@ private theorem Formula.eval_fromGate (x : Nat → Bool) (wires : List Formula) 
 def Formula.expandGate (wires : List Formula) (g : Gate) : List Formula :=
   wires ++ [Formula.fromGate wires g]
 
-private theorem Formula.eval_expand (x : Nat → Bool) (wires : List Formula) (gates : List Gate)
-    (hgates : ∀ g ∈ gates, supported g) :
-    (gates.foldl Formula.expandGate wires).map (Formula.eval x) =
-      gates.foldl (fun values g => values ++ [g.op.eval (g.inputs.map fun i => values.getD i false)])
-        (wires.map (Formula.eval x)) := by
-  induction gates generalizing wires with
-  | nil => rfl
-  | cons g gates ih =>
-    rw [List.foldl_cons, List.foldl_cons, ih _ (fun h hh => hgates h (List.mem_cons_of_mem g hh))]
-    simp [Formula.expandGate, Formula.eval_fromGate x wires g (hgates g (by simp))]
-
-/-- NOT reads only its first source in the repository's circuit semantics. -/
 def effectiveInputs (g : Gate) : List Nat :=
   match g.op with
   | .not => g.inputs.take 1
@@ -481,115 +280,264 @@ private theorem Formula.polarity_in_source (wires : List Formula) (g : Gate) (a 
       exact ⟨j, by simp [effectiveInputs, hop, h],
         by simpa [Formula.fromGate, hop, h, isNegation, Formula.hasPolarity] using path⟩
 
-/-- Every occurrence in the formulas of a wire store has a corresponding
-signed path through the original gate list. -/
-def Traced (gates : List Gate) (n : Nat) (wires : List Formula) : Prop :=
-  ∀ j f, wires[j]? = some f → ∀ a sign, f.hasPolarity a sign →
-    SignedPath (consumes gates n) (negatesWire gates n) j a sign
+/-- Expand a circuit while treating selected gate wires as new inputs. -/
+def Formula.expandWithCuts (cut : Nat → Bool) (wires : List Formula) (gate : Gate) : List Formula :=
+  if cut wires.length then wires ++ [.input wires.length] else Formula.expandGate wires gate
 
-private theorem trace_initial (gates : List Gate) (n : Nat) :
-    Traced gates n (List.ofFn (fun i : Fin n => Formula.input i.val)) := by
+def unfoldWithCuts (C : Circuit) (n : Nat) (cut : Nat → Bool) (wire : Nat) : Formula :=
+  Formula.read (C.gates.foldl (Formula.expandWithCuts cut)
+    (List.ofFn (fun i : Fin n => Formula.input i.val))) wire
+
+private def advanceValues (values : List Bool) (g : Gate) : List Bool :=
+  values ++ [g.op.eval (g.inputs.map (fun i => values.getD i false))]
+
+private theorem advance_prefix (gs : List Gate) (values : List Bool) :
+    ∃ tail, gs.foldl advanceValues values = values ++ tail := by
+  induction gs generalizing values with
+  | nil => exact ⟨[], by simp⟩
+  | cons g gs ih =>
+    obtain ⟨tail, eq⟩ := ih (advanceValues values g)
+    refine ⟨g.op.eval (g.inputs.map (fun i => values.getD i false)) :: tail, ?_⟩
+    simpa [List.foldl_cons, advanceValues, List.append_assoc] using eq
+
+private theorem value_at_next_wire (g : Gate) (gs : List Gate) (values : List Bool) :
+    (gs.foldl advanceValues (advanceValues values g)).getD values.length false =
+      g.op.eval (g.inputs.map (fun i => values.getD i false)) := by
+  obtain ⟨tail, h⟩ := advance_prefix gs (advanceValues values g)
+  rw [h]
+  simp [advanceValues, List.append_assoc, List.getD_eq_getElem?_getD]
+
+private theorem eval_cut_trace (cut : Nat → Bool) (gs : List Gate) (wires : List Formula)
+    (values full : List Bool) (support : ∀ g ∈ gs, supported g)
+    (agrees : wires.map (Formula.eval (fun i => full.getD i false)) = values)
+    (finished : gs.foldl advanceValues values = full) :
+    (gs.foldl (Formula.expandWithCuts cut) wires).map (Formula.eval (fun i => full.getD i false)) =
+      full := by
+  induction gs generalizing values wires with
+  | nil => simpa using agrees.trans finished
+  | cons g rest ih =>
+    rw [List.foldl_cons]
+    apply ih (values := advanceValues values g) _
+    · exact fun next h => support next (List.mem_cons_of_mem g h)
+    · have nextIndex : wires.length = values.length := by
+        rw [← agrees, List.length_map]
+      by_cases cutHere : cut wires.length = true
+      · have value := value_at_next_wire g rest values
+        rw [show rest.foldl advanceValues (advanceValues values g) = full from finished] at value
+        rw [Formula.expandWithCuts, ite_eq_left cutHere]
+        simp only [List.map_append, List.map_cons, Formula.eval, List.map_nil]
+        rw [agrees, nextIndex, value]
+        rfl
+      · rw [Formula.expandWithCuts, ite_eq_right cutHere]
+        simp only [Formula.expandGate, List.map_append, List.map_cons, List.map_nil]
+        rw [Formula.eval_fromGate _ _ _ (support g (by simp)), agrees]
+        rfl
+    · exact finished
+
+/-- Cutting wires preserves the output when each cut is assigned its
+original value. This is independent of how the cuts were selected. -/
+theorem eval_unfoldWithCuts (C : Circuit) (n : Nat) (x : Fin n → Bool)
+    (cut : Nat → Bool) (wire : Nat) (support : ∀ g ∈ C.gates, supported g) :
+    (unfoldWithCuts C n cut wire).eval (fun j => (C.wires (List.ofFn x)).getD j false) =
+      (C.wires (List.ofFn x)).getD wire false := by
+  let initial := List.ofFn (fun i : Fin n => Formula.input i.val)
+  let input := List.ofFn x
+  let full := C.wires input
+  have done : C.gates.foldl advanceValues input = full := rfl
+  obtain ⟨tail, prefixEq⟩ := advance_prefix C.gates input
+  rw [done] at prefixEq
+  have agrees : initial.map (Formula.eval (fun j => full.getD j false)) = input := by
+    simp only [initial, List.map_ofFn, Function.comp_def, Formula.eval]
+    congr 1
+    funext i
+    have bound : i.val < input.length := by simp [input]
+    rw [prefixEq, List.getD_eq_getElem?_getD, List.getElem?_append_left bound]
+    simp [input, i.isLt]
+  change (Formula.read (C.gates.foldl (Formula.expandWithCuts cut) initial) wire).eval
+      (fun j => full.getD j false) = full.getD wire false
+  rw [Formula.eval_read, eval_cut_trace cut _ _ input full support agrees done]
+
+/-- Paths after symbolic cuts cannot enter a cut wire. -/
+def cutEdge (gates : List Gate) (n : Nat) (cut : Nat → Bool) (a b : Nat) : Prop :=
+  consumes gates n a b ∧ cut b = false
+
+def CutTrace (gates : List Gate) (n : Nat) (cut : Nat → Bool) (wires : List Formula) : Prop :=
+  ∀ j f, wires[j]? = some f → ∀ a sign, f.hasPolarity a sign →
+    (a < n ∨ cut a = true) ∧ SignedPath (cutEdge gates n cut) (negatesWire gates n) j a sign
+
+private theorem cutTrace_initial (gates : List Gate) (n : Nat) (cut : Nat → Bool) :
+    CutTrace gates n cut (List.ofFn (fun i : Fin n => Formula.input i.val)) := by
   intro j f h a sign hp
   simp only [List.getElem?_ofFn] at h
   split at h
   · cases h
     obtain ⟨rfl, rfl⟩ := hp
-    exact .done
+    exact ⟨Or.inl (by assumption), .done⟩
   · simp at h
 
-private theorem trace_expand (gates : List Gate) (n : Nat) (wires : List Formula) (g : Gate)
-    (trace : Traced gates n wires) (lo : n ≤ wires.length)
-    (atGate : gates[wires.length - n]? = some g) (hg : supported g) :
-    Traced gates n (Formula.expandGate wires g) := by
+private theorem cutTrace_expand (gates : List Gate) (n : Nat) (cut : Nat → Bool)
+    (wires : List Formula) (g : Gate) (trace : CutTrace gates n cut wires)
+    (lo : n ≤ wires.length) (atGate : gates[wires.length - n]? = some g) (hg : supported g) :
+    CutTrace gates n cut (Formula.expandWithCuts cut wires g) := by
   intro j f h a sign hp
+  have hstore : ∃ last, Formula.expandWithCuts cut wires g = wires ++ [last] := by
+    cases hc : cut wires.length <;> simp [Formula.expandWithCuts, Formula.expandGate, hc]
   by_cases before : j < wires.length
-  · apply trace j f _ a sign hp
-    simpa [Formula.expandGate, List.getElem?_append_left before] using h
+  · obtain ⟨last, eq⟩ := hstore
+    apply trace j f _ a sign hp
+    simpa [eq, List.getElem?_append_left before] using h
   · have eq : j = wires.length := by
-      have bound : j < (Formula.expandGate wires g).length := by
-        by_cases hbound : j < (Formula.expandGate wires g).length
-        · exact hbound
-        · rw [List.getElem?_eq_none (by omega)] at h
-          contradiction
-      simp [Formula.expandGate] at bound
+      obtain ⟨last, hs⟩ := hstore
+      rw [hs] at h
+      obtain ⟨bound, _⟩ := List.getElem?_eq_some_iff.mp h
+      simp at bound
       omega
     subst j
-    have fIsGate : f = Formula.fromGate wires g := by
-      simpa [Formula.expandGate, List.getElem?_append_right] using h.symm
-    subst f
-    obtain ⟨src, hsrc, hpath⟩ := Formula.polarity_in_source wires g a sign hg hp
-    have srcExists : src < wires.length := by
-      by_cases existsWire : src < wires.length
-      · exact existsWire
-      · rw [Formula.read, List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)] at hpath
-        exact hpath.elim
-    have readIsSome : wires[src]? = some (Formula.read wires src) := by
-      simp [Formula.read, List.getElem?_eq_getElem srcExists, List.getD_eq_getElem?_getD]
-    have path := trace src _ readIsSome a _ hpath
-    have edge : consumes gates n src wires.length := ⟨srcExists, lo, g, atGate, hsrc⟩
-    have finished := path.snoc edge
-    cases hn : isNegation g <;> cases sign <;>
-      simpa [negatesWire, atGate, hn] using finished
+    cases hc : cut wires.length
+    · have fIsGate : f = Formula.fromGate wires g := by
+        simpa [Formula.expandWithCuts, hc, Formula.expandGate, List.getElem?_append_right] using h.symm
+      subst f
+      obtain ⟨src, hsrc, hpath⟩ := Formula.polarity_in_source wires g a sign hg hp
+      have srcExists : src < wires.length := by
+        by_cases existsWire : src < wires.length
+        · exact existsWire
+        · rw [Formula.read, List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)] at hpath
+          exact hpath.elim
+      have readIsSome : wires[src]? = some (Formula.read wires src) := by
+        simp [Formula.read, List.getElem?_eq_getElem srcExists, List.getD_eq_getElem?_getD]
+      obtain ⟨allowed, path⟩ := trace src _ readIsSome a _ hpath
+      have edge : cutEdge gates n cut src wires.length := ⟨⟨srcExists, lo, g, atGate, hsrc⟩, hc⟩
+      have finished := path.snoc edge
+      refine ⟨allowed, ?_⟩
+      cases hn : isNegation g <;> cases sign <;>
+        simpa [negatesWire, atGate, hn] using finished
+    · have fIsInput : f = .input wires.length := by
+        simpa [Formula.expandWithCuts, hc, List.getElem?_append_right] using h.symm
+      subst f
+      obtain ⟨rfl, rfl⟩ := hp
+      exact ⟨Or.inr hc, .done⟩
 
-private theorem trace_fold (gates : List Gate) (n : Nat) (wires : List Formula) (rest : List Gate)
-    (trace : Traced gates n wires) (lo : n ≤ wires.length)
-    (lookup : ∀ k, gates[wires.length - n + k]? = rest[k]?)
+private theorem expandWithCuts_length (cut : Nat → Bool) (wires : List Formula) (g : Gate) :
+    (Formula.expandWithCuts cut wires g).length = wires.length + 1 := by
+  cases h : cut wires.length <;> simp [Formula.expandWithCuts, Formula.expandGate, h]
+
+private theorem cutTrace_fold (gates : List Gate) (n : Nat) (cut : Nat → Bool)
+    (wires : List Formula) (rest : List Gate) (trace : CutTrace gates n cut wires)
+    (lo : n ≤ wires.length) (lookup : ∀ k, gates[wires.length - n + k]? = rest[k]?)
     (support : ∀ g ∈ rest, supported g) :
-    Traced gates n (rest.foldl Formula.expandGate wires) := by
+    CutTrace gates n cut (rest.foldl (Formula.expandWithCuts cut) wires) := by
   induction rest generalizing wires with
   | nil => exact trace
   | cons g gs ih =>
     rw [List.foldl_cons]
     apply ih
-    · exact trace_expand gates n wires g trace lo (by simpa using lookup 0) (support g (by simp))
-    · simp [Formula.expandGate]
+    · exact cutTrace_expand gates n cut wires g trace lo
+        (by simpa using lookup 0) (support g (by simp))
+    · rw [expandWithCuts_length]
       omega
     · intro k
-      have h := lookup (k + 1)
-      simpa [Formula.expandGate, show wires.length + 1 - n + k =
-        wires.length - n + (k + 1) by omega] using h
+      rw [expandWithCuts_length]
+      simpa [show wires.length + 1 - n + k = wires.length - n + (k + 1) by omega] using lookup (k + 1)
     · intro h hh
       exact support h (List.mem_cons_of_mem g hh)
 
-/-- The formula obtained by unfolding the output of a circuit. -/
+/-- Any variable of a cut expression originates at an original input or a cut
+wire and is connected by a path that does not enter a cut. -/
+theorem trace_unfoldWithCuts (C : Circuit) (n : Nat) (cut : Nat → Bool) (wire a : Nat)
+    (sign : Bool) (support : ∀ g ∈ C.gates, supported g)
+    (polarity : (unfoldWithCuts C n cut wire).hasPolarity a sign) :
+    (a < n ∨ cut a = true) ∧
+      SignedPath (cutEdge C.gates n cut) (negatesWire C.gates n) wire a sign := by
+  let initial := List.ofFn (fun i : Fin n => Formula.input i.val)
+  let wires := C.gates.foldl (Formula.expandWithCuts cut) initial
+  have tr : CutTrace C.gates n cut wires := cutTrace_fold C.gates n cut initial C.gates
+    (cutTrace_initial C.gates n cut) (by simp [initial]) (by simp [initial]) support
+  have existsWire : wire < wires.length := by
+    by_cases h : wire < wires.length
+    · exact h
+    · change (Formula.read wires wire).hasPolarity a sign at polarity
+      rw [Formula.read, List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)] at polarity
+      exact polarity.elim
+  apply tr wire (Formula.read wires wire) _ a sign polarity
+  simp [Formula.read, List.getElem?_eq_getElem existsWire, List.getD_eq_getElem?_getD]
+
+theorem Formula.eval_le_of_signed_le (f : Formula) (x y : Nat → Bool)
+    (h : ∀ a sign, f.hasPolarity a sign → if sign then x a ≤ y a else y a ≤ x a) :
+    f.eval x ≤ f.eval y := by
+  induction f generalizing x y with
+  | input a => exact h a true ⟨rfl, rfl⟩
+  | constant v => exact le_rfl
+  | and a b ihA ihB =>
+    have ha := ihA x y (fun j s hp => h j s (Or.inl hp))
+    have hb := ihB x y (fun j s hp => h j s (Or.inr hp))
+    cases e₁ : a.eval x <;> cases e₂ : a.eval y <;>
+      cases e₃ : b.eval x <;> cases e₄ : b.eval y <;> simp_all [Formula.eval]
+  | or a b ihA ihB =>
+    have ha := ihA x y (fun j s hp => h j s (Or.inl hp))
+    have hb := ihB x y (fun j s hp => h j s (Or.inr hp))
+    cases e₁ : a.eval x <;> cases e₂ : a.eval y <;>
+      cases e₃ : b.eval x <;> cases e₄ : b.eval y <;> simp_all [Formula.eval]
+  | not a ih =>
+    have ha := ih y x (fun j s hp => by
+      have hp' : (Formula.not a).hasPolarity j (!s) := by cases s <;> exact hp
+      have hs := h j (!s) hp'
+      cases s <;> exact hs)
+    cases e₁ : a.eval x <;> cases e₂ : a.eval y <;> simp_all [Formula.eval]
+
+theorem Formula.eval_eq_of_support_eq (f : Formula) (x y : Nat → Bool)
+    (h : ∀ a sign, f.hasPolarity a sign → x a = y a) : f.eval x = f.eval y := by
+  apply le_antisymm
+  · apply f.eval_le_of_signed_le
+    intro a sign hp
+    rw [h a sign hp]
+    cases sign <;> simp
+  · apply f.eval_le_of_signed_le
+    intro a sign hp
+    rw [h a sign hp]
+    cases sign <;> simp
+
+private theorem originalValue (C : Circuit) (n : Nat) (x : Fin n → Bool) {a : Nat}
+    (ha : a < n) :
+    (C.wires (List.ofFn x)).getD a false = x ⟨a, ha⟩ := by
+  obtain ⟨tail, h⟩ := advance_prefix C.gates (List.ofFn x)
+  change C.wires (List.ofFn x) = List.ofFn x ++ tail at h
+  have bound : a < (List.ofFn x).length := by simpa using ha
+  rw [h, List.getD_eq_getElem?_getD, List.getElem?_append_left bound]
+  simp [ha]
+
 def unfoldOutput (C : Circuit) (n : Nat) : Formula :=
-  Formula.read (C.gates.foldl Formula.expandGate (List.ofFn (fun i : Fin n => Formula.input i.val))) C.output
+  unfoldWithCuts C n (fun _ => false) C.output
 
 theorem eval_unfoldOutput (C : Circuit) (n : Nat) (x : Nat → Bool)
-    (hC : ∀ g ∈ C.gates, supported g) :
+    (support : ∀ g ∈ C.gates, supported g) :
     (unfoldOutput C n).eval x = C.eval (List.ofFn (fun i : Fin n => x i.val)) := by
-  unfold unfoldOutput Circuit.eval Circuit.wires
-  rw [Formula.eval_read, Formula.eval_expand x _ _ hC]
-  simp [List.map_ofFn, Function.comp_def, Formula.eval]
+  let input (i : Fin n) := x i.val
+  refine ((unfoldOutput C n).eval_eq_of_support_eq x
+    (fun a => (C.wires (List.ofFn input)).getD a false) ?_).trans
+    (eval_unfoldWithCuts C n input (fun _ => false) C.output support)
+  intro a sign h
+  have ha : a < n := by
+    simpa using (trace_unfoldWithCuts C n (fun _ => false) C.output a sign support h).1
+  exact (originalValue C n input ha).symm
 
-/-- A promised rising or falling example produces the corresponding path sign
-in the actual circuit's output expression. -/
 theorem circuit_polarity (C : Circuit) (n i : Nat) (x y : Nat → Bool)
-    (hC : ∀ g ∈ C.gates, supported g) (agree : ∀ j, j ≠ i → x j = y j)
-    (hi : y i = true) (positive : Bool)
-    (hx : C.eval (List.ofFn (fun j : Fin n => x j.val)) = !positive)
+    (hC : ∀ g ∈ C.gates, supported g)
+    (agree : ∀ j, j ≠ i → x j = y j) (hi : y i = true)
+    (positive : Bool) (hx : C.eval (List.ofFn (fun j : Fin n => x j.val)) = !positive)
     (hy : C.eval (List.ofFn (fun j : Fin n => y j.val)) = positive) :
     (unfoldOutput C n).hasPolarity i positive :=
   Formula.polarity_of_change (unfoldOutput C n) x y i agree hi positive
     ((eval_unfoldOutput C n x hC).trans hx) ((eval_unfoldOutput C n y hC).trans hy)
 
-/-- Connect the polarity witness in the unfolded formula to actual consuming gates. -/
 theorem trace_circuit_polarity (C : Circuit) (n a : Nat) (sign : Bool)
     (support : ∀ g ∈ C.gates, supported g)
     (polarity : (unfoldOutput C n).hasPolarity a sign) :
     SignedPath (consumes C.gates n) (negatesWire C.gates n) C.output a sign := by
-  let initial := List.ofFn (fun i : Fin n => Formula.input i.val)
-  let wires := C.gates.foldl Formula.expandGate initial
-  have tr : Traced C.gates n wires := trace_fold C.gates n initial C.gates
-    (trace_initial C.gates n) (by simp [initial]) (by simp [initial]) support
-  have outExists : C.output < wires.length := by
-    by_cases h : C.output < wires.length
-    · exact h
-    · change (Formula.read wires C.output).hasPolarity a sign at polarity
-      rw [Formula.read, List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)] at polarity
-      exact polarity.elim
-  apply tr C.output (Formula.read wires C.output) _ a sign polarity
-  simp [Formula.read, List.getElem?_eq_getElem outExists, List.getD_eq_getElem?_getD]
+  have tr := (trace_unfoldWithCuts C n (fun _ => false) C.output a sign support polarity).2
+  have edgeEq : cutEdge C.gates n (fun _ => false) = consumes C.gates n := by
+    funext u v
+    simp [cutEdge]
+  simpa only [edgeEq] using tr
 
 def inputRow (r : Nat) : List Bool := List.ofFn (fun i : Fin 6 => r.testBit i.val)
 
@@ -882,51 +830,33 @@ theorem live_gate_count_le (C : Circuit) :
     exact Finset.mem_image.mpr ⟨w - 6, Finset.mem_range.mpr (by omega), by omega⟩
   exact (Finset.card_le_card sub).trans (Finset.card_image_le.trans (by simp))
 
-/-- Summing outgoing degrees with one use paid by each non-root vertex
-leaves precisely the contribution of repeated uses. -/
+/-- Every non-output live wire pays one use. The remaining uses of any
+marked live wires are included in the total. -/
 theorem live_repeat_budget (C : Circuit) (limit : C.output < 6 + C.gates.length)
-    (a b : Nat) (ha : a ∈ (liveWires C).erase C.output) (hb : b ∈ (liveWires C).erase C.output)
-    (ne : a ≠ b) :
-    (liveWires C).card - 1 + ((usersOf C a).card - 1) + ((usersOf C b).card - 1) ≤
+    (marked : Finset Nat) (sub : marked ⊆ (liveWires C).erase C.output) :
+    (liveWires C).card - 1 + ∑ x ∈ marked, ((usersOf C x).card - 1) ≤
       ∑ x ∈ liveWires C, (usersOf C x).card := by
   classical
   let V := liveWires C
   let R := V.erase C.output
-  let S := R.erase a
+  let extra (x : Nat) := (usersOf C x).card - 1
   have rootIn : C.output ∈ V := (liveWires_iff C limit _).mpr ⟨true, .done⟩
-  have bIn : b ∈ S := Finset.mem_erase.mpr ⟨Ne.symm ne, hb⟩
-  have sumR := Finset.sum_erase_add V (fun x => (usersOf C x).card) rootIn
-  rw [root_has_no_live_user C, Finset.card_empty, Nat.add_zero] at sumR
-  have sumS := Finset.sum_erase_add R (fun x => (usersOf C x).card) ha
-  have sumT := Finset.sum_erase_add S (fun x => (usersOf C x).card) bIn
-  have cardR := Finset.card_erase_of_mem rootIn
-  have cardS := Finset.card_erase_of_mem ha
-  have cardT := Finset.card_erase_of_mem bIn
-  have base : (S.erase b).card ≤ ∑ x ∈ S.erase b, (usersOf C x).card := by
+  have total := Finset.sum_erase_add V (fun x => (usersOf C x).card) rootIn
+  rw [root_has_no_live_user C, Finset.card_empty, Nat.add_zero] at total
+  have count : R.card = V.card - 1 := Finset.card_erase_of_mem rootIn
+  have sum : R.card + ∑ x ∈ R, extra x = ∑ x ∈ R, (usersOf C x).card := by
     calc
-      _ = ∑ _x ∈ S.erase b, (1 : Nat) := by simp
-      _ ≤ _ := Finset.sum_le_sum (fun x hx => live_wire_is_used C limit
-        (Finset.mem_of_mem_erase (Finset.mem_of_mem_erase hx)))
-  have oneA := live_wire_is_used C limit ha
-  have oneB := live_wire_is_used C limit hb
-  have countAB : 2 ≤ R.card := by
-    have : ({a, b} : Finset Nat) ⊆ R := by
-      intro x hx
-      have choice : x = a ∨ x = b := by simpa using hx
-      rcases choice with rfl | rfl
-      · exact ha
-      · exact hb
-    simpa [ne] using Finset.card_le_card this
-  change R.card = V.card - 1 at cardR
-  change S.card = R.card - 1 at cardS
-  change (S.erase b).card = S.card - 1 at cardT
-  change ∑ x ∈ R, (usersOf C x).card = ∑ x ∈ V, (usersOf C x).card at sumR
-  change (∑ x ∈ S, (usersOf C x).card) + (usersOf C a).card =
-    ∑ x ∈ R, (usersOf C x).card at sumS
-  change (∑ x ∈ S.erase b, (usersOf C x).card) + (usersOf C b).card =
-    ∑ x ∈ S, (usersOf C x).card at sumT
-  change V.card - 1 + ((usersOf C a).card - 1) + ((usersOf C b).card - 1) ≤
-    ∑ x ∈ V, (usersOf C x).card
+      R.card + ∑ x ∈ R, extra x = ∑ x ∈ R, (1 + extra x) := by
+        rw [Finset.sum_add_distrib]
+        simp
+      _ = _ := Finset.sum_congr rfl fun x hx => by
+        have used := live_wire_is_used C limit hx
+        dsimp [extra]
+        omega
+  have extraBound : ∑ x ∈ marked, extra x ≤ ∑ x ∈ R, extra x :=
+    Finset.sum_le_sum_of_subset_of_nonneg sub (fun _ _ _ => Nat.zero_le _)
+  change (∑ x ∈ R, (usersOf C x).card) = ∑ x ∈ V, (usersOf C x).card at total
+  change V.card - 1 + ∑ x ∈ marked, extra x ≤ ∑ x ∈ V, (usersOf C x).card
   omega
 
 theorem edges_bounded_by_gates (C : Circuit) (fanIn : ∀ g ∈ C.gates, g.inputs.length ≤ 2)
@@ -1012,6 +942,7 @@ theorem realizing_live_topology (C : Circuit) (support : ∀ g ∈ C.gates, supp
     (realizes : realizesGraph C) :
     ∃ shared nGate,
       (∃ a b, a ≠ b ∧ liveEdge C shared a ∧ liveEdge C shared b) ∧
+      SignedPath (liveEdge C) (negatesWire C.gates 6) C.output shared false ∧
       (∀ v l r, l ≠ r → liveEdge C v l → liveEdge C v r → v = shared) ∧
       liveWire C nGate ∧ 6 ≤ nGate ∧ negatesWire C.gates 6 nGate = true ∧
       (∀ w, liveWire C w → 6 ≤ w → negatesWire C.gates 6 w = true → w = nGate) ∧
@@ -1021,8 +952,13 @@ theorem realizing_live_topology (C : Circuit) (support : ∀ g ∈ C.gates, supp
   have ⟨pos, neg⟩ := circuit_binate_paths C support realizes 1 (by decide)
   have p := (trace_circuit_polarity C 6 1 true support pos).to_live C
   have q := (trace_circuit_polarity C 6 1 false support neg).to_live C
-  obtain ⟨shared, a, b, ne, ab, bb, _, _⟩ :=
-    p.reaches_branch q (fun _ _ e => e.1.1) (by decide)
+  obtain ⟨shared, a, b, ne, ab, bb, _, s₁, s₂, _, first, second, different⟩ :=
+    p.diverges_with_suffixes q (fun _ _ e => e.1.1) (by decide)
+  have negative : SignedPath (liveEdge C) (negatesWire C.gates 6) C.output shared false := by
+    cases h : s₁
+    · simpa [h] using first
+    · have h' : s₂ = false := by cases s₂ <;> simp_all
+      simpa [h'] using second
   have sUsed := branching_has_two_users C limit ne ab bb
   have sLive : liveWire C shared := by
     obtain ⟨_, p⟩ := ab.2
@@ -1036,24 +972,13 @@ theorem realizing_live_topology (C : Circuit) (support : ∀ g ∈ C.gates, supp
   have upper := edges_bounded_by_gates C fanIn limit edge.2 edge.1.2.1 isNeg
   let V := liveWires C
   let R := V.erase C.output
-  let T := R.erase shared
   let edges := ∑ x ∈ V, (usersOf C x).card
   let gates := ((liveWires C).filter (fun w => ¬ w < 6)).card
-  have rootIn : C.output ∈ V := (liveWires_iff C limit _).mpr ⟨true, .done⟩
-  have cardR : R.card = V.card - 1 := Finset.card_erase_of_mem rootIn
-  have cardT : T.card = R.card - 1 := Finset.card_erase_of_mem sNotRootIn
-  have useR := Finset.sum_erase_add V (fun x => (usersOf C x).card) rootIn
-  rw [root_has_no_live_user C, Finset.card_empty, Nat.add_zero] at useR
-  have useT := Finset.sum_erase_add R (fun x => (usersOf C x).card) sNotRootIn
-  have base : T.card ≤ ∑ x ∈ T, (usersOf C x).card := by
-    calc
-      _ = ∑ _x ∈ T, (1 : Nat) := by simp
-      _ ≤ _ := Finset.sum_le_sum (fun x hx => live_wire_is_used C limit
-        (Finset.mem_of_mem_erase hx))
-  change (∑ x ∈ R, (usersOf C x).card) = edges at useR
-  change (∑ x ∈ T, (usersOf C x).card) + (usersOf C shared).card =
-    ∑ x ∈ R, (usersOf C x).card at useT
-  have lower : V.card ≤ edges := by omega
+  have paid := live_repeat_budget C limit {shared} (Finset.singleton_subset_iff.mpr sNotRootIn)
+  simp only [Finset.sum_singleton] at paid
+  have lower : V.card ≤ edges := by
+    change V.card - 1 + ((usersOf C shared).card - 1) ≤ edges at paid
+    omega
   have partition := Finset.card_filter_add_card_filter_not (s := V) (fun w => w < 6)
   have inputCount := count_live_inputs C support realizes limit
   change 5 ≤ (V.filter (fun w => w < 6)).card at inputCount
@@ -1085,7 +1010,7 @@ theorem realizing_live_topology (C : Circuit) (support : ∀ g ∈ C.gates, supp
       have hl := predecessor_bound_not C w hnot
       simp only [ite_eq_right hn, ite_eq_right (Nat.not_lt_of_ge ge)] at hb
       omega
-  refine ⟨shared, n, ⟨a, b, ne, ab, bb⟩, ?_, edge.2, edge.1.2.1, isNeg, uniqueNot, noThree⟩
+  refine ⟨shared, n, ⟨a, b, ne, ab, bb⟩, negative, ?_, edge.2, edge.1.2.1, isNeg, uniqueNot, noThree⟩
   intro v l r separate hl hr
   by_cases same : v = shared
   · exact same
@@ -1097,7 +1022,14 @@ theorem realizing_live_topology (C : Circuit) (support : ∀ g ∈ C.gates, supp
       obtain ⟨_, suffix⟩ := hl.2
       exact ⟨_, .next hl.1 suffix⟩
     have vIn : v ∈ R := Finset.mem_erase.mpr ⟨vNotRoot, (liveWires_iff C limit _).mpr vLive⟩
-    have tooMany := live_repeat_budget C limit shared v sNotRootIn vIn (Ne.symm same)
+    have marked : ({shared, v} : Finset Nat) ⊆ R := by
+      intro x hx
+      simp only [Finset.mem_insert, Finset.mem_singleton] at hx
+      rcases hx with rfl | rfl
+      · exact sNotRootIn
+      · exact vIn
+    have tooMany := live_repeat_budget C limit {shared, v} marked
+    rw [Finset.sum_insert (by simpa using Ne.symm same), Finset.sum_singleton, ← Nat.add_assoc] at tooMany
     change V.card - 1 + ((usersOf C shared).card - 1) + ((usersOf C v).card - 1) ≤
       edges at tooMany
     omega
@@ -1114,7 +1046,7 @@ theorem realizing_shared_upstream (C : Circuit) (support : ∀ g ∈ C.gates, su
       (∀ v l r, l ≠ r → liveEdge C v l → liveEdge C v r → v = shared) ∧
       (∀ w, liveWire C w → 6 ≤ w → negatesWire C.gates 6 w = true → w = nGate) ∧
       liveWire C nGate ∧ negatesWire C.gates 6 nGate = true ∧ ¬ liveWire C 3 := by
-  obtain ⟨shared, n, _, unique, liveN, _, negN, uniqueNot, noThree⟩ :=
+  obtain ⟨shared, n, _, negative, unique, liveN, _, negN, uniqueNot, noThree⟩ :=
     realizing_live_topology C support fanIn size realizes
   have forward : ∀ a b, liveEdge C a b → a < b := fun _ _ h => h.1.1
   have reaches (i : Fin 6) (hi : i = 1 ∨ i = 2) :
@@ -1132,265 +1064,9 @@ theorem realizing_shared_upstream (C : Circuit) (support : ∀ g ∈ C.gates, su
       exact h.1.2.1
     · obtain ⟨_, h⟩ := r1.last_edge eq
       exact h.1.2.1
-  have ⟨hp, hn⟩ := circuit_binate_paths C support realizes 1 (by decide)
-  have p := (trace_circuit_polarity C 6 1 true support hp).to_live C
-  have q := (trace_circuit_polarity C 6 1 false support hn).to_live C
-  obtain ⟨branch, l, r, ne, el, er, _, s₁, s₂, _, fin₁, fin₂, different⟩ :=
-    p.diverges_with_suffixes q forward (by decide)
-  have eqBranch := unique branch l r ne el er
-  subst branch
-  have negative : SignedPath (liveEdge C) (negatesWire C.gates 6) C.output shared false := by
-    cases e : s₁
-    · simpa [e] using fin₁
-    · have : s₂ = false := by cases s₂ <;> simp_all
-      simpa [this] using fin₂
   obtain ⟨_, v, link, hNot, lt, _, reachV⟩ := negative.reaches_negation rfl forward
   have eqNot := uniqueNot v link.2 link.1.2.1 hNot
   exact ⟨shared, n, ge, eqNot ▸ lt, reaches, eqNot ▸ reachV, unique, uniqueNot, liveN, negN, noThree⟩
-
-/-- An edge that bypasses a cut wire must have both endpoints off the cut. -/
-def avoidsWire (edge : Nat → Nat → Prop) (cut a b : Nat) : Prop :=
-  edge a b ∧ a ≠ cut ∧ b ≠ cut
-
-/-- Before the only branching wire, the continuation is forced. Thus an input
-that reaches the shared wire cannot reach the output along a bypass. -/
-theorem SignedPath.no_bypass {edge : Nat → Nat → Prop} {negates : Nat → Bool}
-    {root cut a : Nat} {first second : Bool}
-    (toCut : SignedPath edge negates cut a first)
-    (bypass : SignedPath (avoidsWire edge cut) negates root a second)
-    (forward : ∀ i j, edge i j → i < j) (order : cut < root)
-    (unique : ∀ v l r, l ≠ r → edge v l → edge v r → v = cut) : False := by
-  induction toCut generalizing second with
-  | done =>
-    cases bypass with
-    | done => omega
-    | next link _ => exact link.2.1 rfl
-  | @next a b sign link tail ih =>
-    have before : a < cut := Nat.lt_of_lt_of_le (forward a b link) (tail.start_le forward)
-    cases bypass with
-    | done => omega
-    | @next _ c other hop tailB =>
-      by_cases same : b = c
-      · subst c
-        exact ih tailB
-      · have h := unique a b c same link hop.1
-        omega
-
-/-- Expand a circuit while treating selected gate wires as new inputs. -/
-def Formula.expandWithCuts (cut : Nat → Bool) (wires : List Formula) (gate : Gate) : List Formula :=
-  if cut wires.length then wires ++ [.input wires.length] else Formula.expandGate wires gate
-
-def unfoldWithCuts (C : Circuit) (n : Nat) (cut : Nat → Bool) (wire : Nat) : Formula :=
-  Formula.read (C.gates.foldl (Formula.expandWithCuts cut)
-    (List.ofFn (fun i : Fin n => Formula.input i.val))) wire
-
-private def advanceValues (values : List Bool) (g : Gate) : List Bool :=
-  values ++ [g.op.eval (g.inputs.map (fun i => values.getD i false))]
-
-private theorem advance_prefix (gs : List Gate) (values : List Bool) :
-    ∃ tail, gs.foldl advanceValues values = values ++ tail := by
-  induction gs generalizing values with
-  | nil => exact ⟨[], by simp⟩
-  | cons g gs ih =>
-    obtain ⟨tail, eq⟩ := ih (advanceValues values g)
-    refine ⟨g.op.eval (g.inputs.map (fun i => values.getD i false)) :: tail, ?_⟩
-    simpa [List.foldl_cons, advanceValues, List.append_assoc] using eq
-
-private theorem value_at_next_wire (g : Gate) (gs : List Gate) (values : List Bool) :
-    (gs.foldl advanceValues (advanceValues values g)).getD values.length false =
-      g.op.eval (g.inputs.map (fun i => values.getD i false)) := by
-  obtain ⟨tail, h⟩ := advance_prefix gs (advanceValues values g)
-  rw [h]
-  simp [advanceValues, List.append_assoc, List.getD_eq_getElem?_getD]
-
-private theorem eval_cut_trace (cut : Nat → Bool) (gs : List Gate) (wires : List Formula)
-    (values full : List Bool) (support : ∀ g ∈ gs, supported g)
-    (agrees : wires.map (Formula.eval (fun i => full.getD i false)) = values)
-    (finished : gs.foldl advanceValues values = full) :
-    (gs.foldl (Formula.expandWithCuts cut) wires).map (Formula.eval (fun i => full.getD i false)) =
-      full := by
-  induction gs generalizing values wires with
-  | nil => simpa using agrees.trans finished
-  | cons g rest ih =>
-    rw [List.foldl_cons]
-    apply ih (values := advanceValues values g) _
-    · exact fun next h => support next (List.mem_cons_of_mem g h)
-    · have nextIndex : wires.length = values.length := by
-        rw [← agrees, List.length_map]
-      by_cases cutHere : cut wires.length = true
-      · have value := value_at_next_wire g rest values
-        rw [show rest.foldl advanceValues (advanceValues values g) = full from finished] at value
-        rw [Formula.expandWithCuts, ite_eq_left cutHere]
-        simp only [List.map_append, List.map_cons, Formula.eval, List.map_nil]
-        rw [agrees, nextIndex, value]
-        rfl
-      · rw [Formula.expandWithCuts, ite_eq_right cutHere]
-        simp only [Formula.expandGate, List.map_append, List.map_cons, List.map_nil]
-        rw [Formula.eval_fromGate _ _ _ (support g (by simp)), agrees]
-        rfl
-    · exact finished
-
-/-- Cutting wires preserves the output when each cut is assigned its
-original value. This is independent of how the cuts were selected. -/
-theorem eval_unfoldWithCuts (C : Circuit) (n : Nat) (x : Fin n → Bool)
-    (cut : Nat → Bool) (wire : Nat) (support : ∀ g ∈ C.gates, supported g) :
-    (unfoldWithCuts C n cut wire).eval (fun j => (C.wires (List.ofFn x)).getD j false) =
-      (C.wires (List.ofFn x)).getD wire false := by
-  let initial := List.ofFn (fun i : Fin n => Formula.input i.val)
-  let input := List.ofFn x
-  let full := C.wires input
-  have done : C.gates.foldl advanceValues input = full := rfl
-  obtain ⟨tail, prefixEq⟩ := advance_prefix C.gates input
-  rw [done] at prefixEq
-  have agrees : initial.map (Formula.eval (fun j => full.getD j false)) = input := by
-    simp only [initial, List.map_ofFn, Function.comp_def, Formula.eval]
-    congr 1
-    funext i
-    have bound : i.val < input.length := by simp [input]
-    rw [prefixEq, List.getD_eq_getElem?_getD, List.getElem?_append_left bound]
-    simp [input, i.isLt]
-  change (Formula.read (C.gates.foldl (Formula.expandWithCuts cut) initial) wire).eval
-      (fun j => full.getD j false) = full.getD wire false
-  rw [Formula.eval_read, eval_cut_trace cut _ _ input full support agrees done]
-
-/-- Paths after symbolic cuts cannot enter a cut wire. -/
-def cutEdge (gates : List Gate) (n : Nat) (cut : Nat → Bool) (a b : Nat) : Prop :=
-  consumes gates n a b ∧ cut b = false
-
-def CutTrace (gates : List Gate) (n : Nat) (cut : Nat → Bool) (wires : List Formula) : Prop :=
-  ∀ j f, wires[j]? = some f → ∀ a sign, f.hasPolarity a sign →
-    (a < n ∨ cut a = true) ∧ SignedPath (cutEdge gates n cut) (negatesWire gates n) j a sign
-
-private theorem cutTrace_initial (gates : List Gate) (n : Nat) (cut : Nat → Bool) :
-    CutTrace gates n cut (List.ofFn (fun i : Fin n => Formula.input i.val)) := by
-  intro j f h a sign hp
-  simp only [List.getElem?_ofFn] at h
-  split at h
-  · cases h
-    obtain ⟨rfl, rfl⟩ := hp
-    exact ⟨Or.inl (by assumption), .done⟩
-  · simp at h
-
-private theorem cutTrace_expand (gates : List Gate) (n : Nat) (cut : Nat → Bool)
-    (wires : List Formula) (g : Gate) (trace : CutTrace gates n cut wires)
-    (lo : n ≤ wires.length) (atGate : gates[wires.length - n]? = some g) (hg : supported g) :
-    CutTrace gates n cut (Formula.expandWithCuts cut wires g) := by
-  intro j f h a sign hp
-  have hstore : ∃ last, Formula.expandWithCuts cut wires g = wires ++ [last] := by
-    cases hc : cut wires.length <;> simp [Formula.expandWithCuts, Formula.expandGate, hc]
-  by_cases before : j < wires.length
-  · obtain ⟨last, eq⟩ := hstore
-    apply trace j f _ a sign hp
-    simpa [eq, List.getElem?_append_left before] using h
-  · have eq : j = wires.length := by
-      obtain ⟨last, hs⟩ := hstore
-      rw [hs] at h
-      obtain ⟨bound, _⟩ := List.getElem?_eq_some_iff.mp h
-      simp at bound
-      omega
-    subst j
-    cases hc : cut wires.length
-    · have fIsGate : f = Formula.fromGate wires g := by
-        simpa [Formula.expandWithCuts, hc, Formula.expandGate, List.getElem?_append_right] using h.symm
-      subst f
-      obtain ⟨src, hsrc, hpath⟩ := Formula.polarity_in_source wires g a sign hg hp
-      have srcExists : src < wires.length := by
-        by_cases existsWire : src < wires.length
-        · exact existsWire
-        · rw [Formula.read, List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)] at hpath
-          exact hpath.elim
-      have readIsSome : wires[src]? = some (Formula.read wires src) := by
-        simp [Formula.read, List.getElem?_eq_getElem srcExists, List.getD_eq_getElem?_getD]
-      obtain ⟨allowed, path⟩ := trace src _ readIsSome a _ hpath
-      have edge : cutEdge gates n cut src wires.length := ⟨⟨srcExists, lo, g, atGate, hsrc⟩, hc⟩
-      have finished := path.snoc edge
-      refine ⟨allowed, ?_⟩
-      cases hn : isNegation g <;> cases sign <;>
-        simpa [negatesWire, atGate, hn] using finished
-    · have fIsInput : f = .input wires.length := by
-        simpa [Formula.expandWithCuts, hc, List.getElem?_append_right] using h.symm
-      subst f
-      obtain ⟨rfl, rfl⟩ := hp
-      exact ⟨Or.inr hc, .done⟩
-
-private theorem expandWithCuts_length (cut : Nat → Bool) (wires : List Formula) (g : Gate) :
-    (Formula.expandWithCuts cut wires g).length = wires.length + 1 := by
-  cases h : cut wires.length <;> simp [Formula.expandWithCuts, Formula.expandGate, h]
-
-private theorem cutTrace_fold (gates : List Gate) (n : Nat) (cut : Nat → Bool)
-    (wires : List Formula) (rest : List Gate) (trace : CutTrace gates n cut wires)
-    (lo : n ≤ wires.length) (lookup : ∀ k, gates[wires.length - n + k]? = rest[k]?)
-    (support : ∀ g ∈ rest, supported g) :
-    CutTrace gates n cut (rest.foldl (Formula.expandWithCuts cut) wires) := by
-  induction rest generalizing wires with
-  | nil => exact trace
-  | cons g gs ih =>
-    rw [List.foldl_cons]
-    apply ih
-    · exact cutTrace_expand gates n cut wires g trace lo
-        (by simpa using lookup 0) (support g (by simp))
-    · rw [expandWithCuts_length]
-      omega
-    · intro k
-      rw [expandWithCuts_length]
-      simpa [show wires.length + 1 - n + k = wires.length - n + (k + 1) by omega] using lookup (k + 1)
-    · intro h hh
-      exact support h (List.mem_cons_of_mem g hh)
-
-/-- Any variable of a cut expression originates at an original input or a cut
-wire and is connected by a path that does not enter a cut. -/
-theorem trace_unfoldWithCuts (C : Circuit) (n : Nat) (cut : Nat → Bool) (wire a : Nat)
-    (sign : Bool) (support : ∀ g ∈ C.gates, supported g)
-    (polarity : (unfoldWithCuts C n cut wire).hasPolarity a sign) :
-    (a < n ∨ cut a = true) ∧
-      SignedPath (cutEdge C.gates n cut) (negatesWire C.gates n) wire a sign := by
-  let initial := List.ofFn (fun i : Fin n => Formula.input i.val)
-  let wires := C.gates.foldl (Formula.expandWithCuts cut) initial
-  have tr : CutTrace C.gates n cut wires := cutTrace_fold C.gates n cut initial C.gates
-    (cutTrace_initial C.gates n cut) (by simp [initial]) (by simp [initial]) support
-  have existsWire : wire < wires.length := by
-    by_cases h : wire < wires.length
-    · exact h
-    · change (Formula.read wires wire).hasPolarity a sign at polarity
-      rw [Formula.read, List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)] at polarity
-      exact polarity.elim
-  apply tr wire (Formula.read wires wire) _ a sign polarity
-  simp [Formula.read, List.getElem?_eq_getElem existsWire, List.getD_eq_getElem?_getD]
-
-theorem Formula.eval_le_of_signed_le (f : Formula) (x y : Nat → Bool)
-    (h : ∀ a sign, f.hasPolarity a sign → if sign then x a ≤ y a else y a ≤ x a) :
-    f.eval x ≤ f.eval y := by
-  induction f generalizing x y with
-  | input a => exact h a true ⟨rfl, rfl⟩
-  | constant v => exact le_rfl
-  | and a b ihA ihB =>
-    have ha := ihA x y (fun j s hp => h j s (Or.inl hp))
-    have hb := ihB x y (fun j s hp => h j s (Or.inr hp))
-    cases e₁ : a.eval x <;> cases e₂ : a.eval y <;>
-      cases e₃ : b.eval x <;> cases e₄ : b.eval y <;> simp_all [Formula.eval]
-  | or a b ihA ihB =>
-    have ha := ihA x y (fun j s hp => h j s (Or.inl hp))
-    have hb := ihB x y (fun j s hp => h j s (Or.inr hp))
-    cases e₁ : a.eval x <;> cases e₂ : a.eval y <;>
-      cases e₃ : b.eval x <;> cases e₄ : b.eval y <;> simp_all [Formula.eval]
-  | not a ih =>
-    have ha := ih y x (fun j s hp => by
-      have hp' : (Formula.not a).hasPolarity j (!s) := by cases s <;> exact hp
-      have hs := h j (!s) hp'
-      cases s <;> exact hs)
-    cases e₁ : a.eval x <;> cases e₂ : a.eval y <;> simp_all [Formula.eval]
-
-theorem Formula.eval_eq_of_support_eq (f : Formula) (x y : Nat → Bool)
-    (h : ∀ a sign, f.hasPolarity a sign → x a = y a) : f.eval x = f.eval y := by
-  apply le_antisymm
-  · apply f.eval_le_of_signed_le
-    intro a sign hp
-    rw [h a sign hp]
-    cases sign <;> simp
-  · apply f.eval_le_of_signed_le
-    intro a sign hp
-    rw [h a sign hp]
-    cases sign <;> simp
 
 theorem SignedPath.map_edge {e e' : Nat → Nat → Prop} {negates : Nat → Bool}
     {root a : Nat} {s : Bool} (p : SignedPath e negates root a s)
@@ -1468,26 +1144,6 @@ theorem SignedPath.no_enter_cut {edge : Nat → Nat → Prop} {negates : Nat →
         exact ih tailB hop.2
       · exact startAway (unique u v w equal link hop.1)
 
-/-- The semantic factorization that the single shared wire and the unique NOT
-must be shown to induce in every candidate six-gate circuit. -/
-def HasSharedFactorization (C : Circuit) : Prop :=
-  ∃ (use0 use4 use5 : Bool) (wire : Nat → Bool) (before after : Bool → Bool → Bool → Bool),
-    PreservesGrowth wire ∧
-    (before false false true = true → before true false true = true) ∧
-    (∀ a z, after a z false = true → after a z true = true) ∧
-    ∀ r ∈ rows,
-      let outside := restMask use0 use4 use5 &&& r
-      let z := wire (mask use0 use4 use5 &&& r)
-      C.eval (inputRow r) =
-        after (outside.testBit 0) z (!(before z (outside.testBit 4) (outside.testBit 5)))
-
-theorem no_realization_with_shared_factorization (C : Circuit)
-    (realizes : realizesGraph C) (shape : HasSharedFactorization C) : False := by
-  obtain ⟨use0, use4, use5, wire, before, after, grow, incBefore, incAfter, evalShape⟩ := shape
-  apply no_shared_factorization use0 use4 use5 wire grow before after incBefore incAfter
-  intro r hr
-  exact (evalShape r hr).symm.trans (eval_promised_row C realizes hr)
-
 theorem candidate_topology (C : Circuit) (legal : PEqualNP.MetaComplexity.FanInTwo C)
     (size : C.size ≤ 6) (realizes : realizesGraph C) :
     ∃ shared nGate, 6 ≤ shared ∧ shared < nGate ∧
@@ -1502,14 +1158,6 @@ theorem candidate_topology (C : Circuit) (legal : PEqualNP.MetaComplexity.FanInT
     simpa [supported] using (legal g hg).1
   · exact fun g hg => (legal g hg).2
 
-/-- Exact interface between the remaining semantic lemma and the refutation. -/
-theorem refutation_of_factorization
-    (extract : ∀ C : Circuit, PEqualNP.MetaComplexity.FanInTwo C → C.size ≤ 6 →
-      realizesGraph C → HasSharedFactorization C) :
-    ¬ (∃ C : Circuit, PEqualNP.MetaComplexity.FanInTwo C ∧ C.size ≤ 6 ∧ realizesGraph C) := by
-  rintro ⟨C, legal, size, realizes⟩
-  exact no_realization_with_shared_factorization C realizes (extract C legal size realizes)
-
 /-- Fix a single-input edge of the promised truth table and recover its sign. -/
 theorem promised_signed_path (C : Circuit) (support : ∀ g ∈ C.gates, supported g)
     (realizes : realizesGraph C) (low i : Nat) (s : Bool)
@@ -1523,48 +1171,14 @@ theorem promised_signed_path (C : Circuit) (support : ∀ g ∈ C.gates, support
   exact (trace_circuit_polarity C 6 i s support p).to_live C
 
 private theorem input_value (C : Circuit) (r a : Nat) (ha : a < 6) :
-    (C.wires (inputRow r)).getD a false = r.testBit a := by
-  obtain ⟨tail, h⟩ := advance_prefix C.gates (inputRow r)
-  change C.wires (inputRow r) = inputRow r ++ tail at h
-  have bound : a < (inputRow r).length := by simpa [inputRow] using ha
-  rw [h, List.getD_eq_getElem?_getD, List.getElem?_append_left bound]
-  simp only [inputRow, List.getElem?_ofFn, dite_eq_left ha, Option.getD_some]
+    (C.wires (inputRow r)).getD a false = r.testBit a :=
+  originalValue C 6 (fun i => r.testBit i.val) ha
 
 private theorem reachable_input_live (C : Circuit) {w a : Nat} {s : Bool}
     (p : SignedPath (liveEdge C) (negatesWire C.gates 6) w a s) (live : liveWire C w) :
     liveWire C a := by
   obtain ⟨_, suffix⟩ := live
   exact ⟨_, (p.map_edge (fun _ _ h => h.1)).join_path suffix⟩
-
-private theorem mask_keeps (use0 use4 use5 : Bool) (r a : Nat)
-    (h : a = 1 ∨ a = 2 ∨
-      (a = 0 ∧ use0 = true) ∨ (a = 4 ∧ use4 = true) ∨ (a = 5 ∧ use5 = true)) :
-    (mask use0 use4 use5 &&& r).testBit a = r.testBit a := by
-  have keep : (mask use0 use4 use5).testBit a = true := by
-    cases use0 <;> cases use4 <;> cases use5 <;>
-      rcases h with rfl | rfl | ⟨rfl, h⟩ | ⟨rfl, h⟩ | ⟨rfl, h⟩ <;>
-      first | contradiction | decide
-  simp only [Nat.testBit_and, keep, Bool.true_and]
-
-private theorem outside_keeps (use0 use4 use5 : Bool) (r a : Nat)
-    (h : (a = 0 ∧ use0 = false) ∨ (a = 4 ∧ use4 = false) ∨ (a = 5 ∧ use5 = false)) :
-    (restMask use0 use4 use5 &&& r).testBit a = r.testBit a := by
-  have keep : (restMask use0 use4 use5).testBit a = true := by
-    cases use0 <;> cases use4 <;> cases use5 <;>
-      rcases h with ⟨rfl, h⟩ | ⟨rfl, h⟩ | ⟨rfl, h⟩ <;>
-      first | contradiction | decide
-  simp only [Nat.testBit_and, keep, Bool.true_and]
-
-theorem SignedPath.positive_above {edge : Nat → Nat → Prop} {neg : Nat → Bool}
-    {root a bound : Nat} {s : Bool} (p : SignedPath edge neg root a s) (low : bound ≤ a)
-    (forward : ∀ x y, edge x y → x < y)
-    (positive : ∀ x y, edge x y → bound < y → neg y = false) : s = true := by
-  induction p with
-  | done => rfl
-  | @next x y s link tail ih =>
-    have lt := forward x y link
-    have high : bound < y := by omega
-    simpa [positive x y link high] using ih (by omega)
 
 theorem SignedPath.positive_below {edge : Nat → Nat → Prop} {neg : Nat → Bool}
     {root a : Nat} {s : Bool} (p : SignedPath edge neg root a s)
@@ -1574,25 +1188,10 @@ theorem SignedPath.positive_below {edge : Nat → Nat → Prop} {neg : Nat → B
   | done => rfl
   | next link tail ih => simpa [positive _ _ link (tail.start_le forward)] using ih
 
-private theorem bit_le_of_mask {a b : Nat} (sub : a &&& b = a) (i : Nat) :
-    a.testBit i ≤ b.testBit i := by
-  have eq := congrArg (fun r : Nat => r.testBit i) sub
-  rw [Nat.testBit_and] at eq
-  cases h : a.testBit i <;> cases k : b.testBit i <;> simp_all
-
-private theorem true_preserved {a b : Bool} (h : a ≤ b) (ha : a = true) : b = true := by
-  cases a <;> cases b <;> simp_all
-  exact ((by decide : ¬ (true ≤ false)) h).elim
-
-private theorem not_true_reversed {a b : Bool} (h : a ≤ b) (hb : (!b) = true) :
-    (!a) = true := by
-  cases a <;> cases b <;> simp_all
-  exact ((by decide : ¬ (true ≤ false)) h).elim
-
 set_option maxHeartbeats 4000000 in
-/-- Extract the semantic factorization from the already proved topology. -/
-theorem factor_candidate (C : Circuit) (legal : PEqualNP.MetaComplexity.FanInTwo C)
-    (size : C.size ≤ 6) (realizes : realizesGraph C) : HasSharedFactorization C := by
+theorem no_six_gate_circuit :
+    ¬ (∃ C : Circuit, PEqualNP.MetaComplexity.FanInTwo C ∧ C.size ≤ 6 ∧ realizesGraph C) := by
+  rintro ⟨C, legal, size, realizes⟩
   classical
   have support : ∀ g ∈ C.gates, supported g := fun g hg => by simpa [supported] using (legal g hg).1
   obtain ⟨shared, n, geShared, sharedLt, bin, _, unique, uniqueNot, liveN, negN, noThree⟩ :=
@@ -1613,19 +1212,11 @@ theorem factor_candidate (C : Circuit) (legal : PEqualNP.MetaComplexity.FanInTwo
   have rootGe : n ≤ C.output := by
     obtain ⟨_, p⟩ := liveN
     exact p.start_le (fun _ _ h => h.1)
-  have nSuffix : SignedPath e neg C.output n true := by
-    obtain ⟨s, p⟩ := liveN
-    have p := p.to_live C
-    have sign := p.positive_above (Nat.le_refl _) forward
-      (fun a b h lt => notGate a b h (by omega))
-    simpa [sign] using p
   let onlyShared (a : Nat) := decide (a = shared)
   let both (a : Nat) := decide (a = shared ∨ a = n)
   let fShared := unfoldWithCuts C 6 (fun _ => false) shared
   let fBefore := unfoldWithCuts C 6 onlyShared n
   let fAfter := unfoldWithCuts C 6 both C.output
-  have pos0 : SignedPath e neg C.output 0 true :=
-    promised_signed_path C support realizes 32 0 true (by decide) (by decide) (by decide) (by decide)
   have neg4 : SignedPath e neg C.output 4 false :=
     promised_signed_path C support realizes 2 4 false (by decide) (by decide) (by decide) (by decide)
   have neg5 : SignedPath e neg C.output 5 false :=
@@ -1650,28 +1241,18 @@ theorem factor_candidate (C : Circuit) (legal : PEqualNP.MetaComplexity.FanInTwo
     exact ⟨sign, by simpa using allowed, fun eq => noThree (eq ▸ reachable_input_live C pt liveShared),
       _, pt⟩
   have useBefore {a : Nat} {s : Bool} (h : fBefore.hasPolarity a s) :
-      s = false ∧ (a = shared ∨ (a = 4 ∧ ¬ reach a) ∨ (a = 5 ∧ ¬ reach a)) := by
+      s = false ∧ (a = shared ∨ (a < 6 ∧ a ≠ 3 ∧ ¬ reach a)) := by
     obtain ⟨allowed, raw⟩ := trace_unfoldWithCuts C 6 onlyShared n a s support h
     have p := raw.to_live_cut C onlyShared liveN
     have pt := p.map_edge (fun _ _ link => link.1)
     have smallOr : a < 6 ∨ a = shared := by simpa [onlyShared] using allowed
     have notN : a ≠ n := by rcases smallOr with h | h <;> omega
-    have sign := pt.into_only_not notN negN notGate forward
-    refine ⟨sign, ?_⟩
+    refine ⟨pt.into_only_not notN negN notGate forward, ?_⟩
     by_cases aShared : a = shared
     · exact Or.inl aShared
-    · have avoids := avoidFromCut (by simp [onlyShared]) aShared (Nat.le_of_lt sharedLt) p
-      have small := smallOr.resolve_right aShared
-      have aNot3 : a ≠ 3 := fun eq => noThree (eq ▸ reachable_input_live C pt liveN)
-      have outP := pt.join_path nSuffix
-      simp only [ite_true] at outP
-      rw [sign] at outP
-      rcases ordinary small aNot3 with rfl | rfl | rfl | rfl | rfl
-      · exact (notOpposite avoids pos0 outP).elim
-      · exact (avoids (bin 1 (by decide))).elim
-      · exact (avoids (bin 2 (by decide))).elim
-      · exact Or.inr (Or.inl ⟨rfl, avoids⟩)
-      · exact Or.inr (Or.inr ⟨rfl, avoids⟩)
+    · exact Or.inr ⟨smallOr.resolve_right aShared,
+        fun eq => noThree (eq ▸ reachable_input_live C pt liveN),
+        avoidFromCut (by simp [onlyShared]) aShared (Nat.le_of_lt sharedLt) p⟩
   have useAfter {a : Nat} {s : Bool} (h : fAfter.hasPolarity a s) :
       s = true ∧ (a = shared ∨ a = n ∨ (a = 0 ∧ ¬ reach a)) := by
     obtain ⟨allowed, raw⟩ := trace_unfoldWithCuts C 6 both C.output a s support h
@@ -1698,101 +1279,117 @@ theorem factor_candidate (C : Circuit) (legal : PEqualNP.MetaComplexity.FanInTwo
     · exact (avoids (bin 2 (by decide))).elim
     · exact (notOpposite avoids pt neg4).elim
     · exact (notOpposite avoids pt neg5).elim
-  let u0 := decide (reach 0)
-  let u4 := decide (reach 4)
-  let u5 := decide (reach 5)
-  let wire (r : Nat) := fShared.eval r.testBit
-  let argBefore (z b4 b5 : Bool) (a : Nat) :=
-    if a = shared then z else if a = 4 then b4 else if a = 5 then b5 else false
-  let argAfter (b0 z inv : Bool) (a : Nat) :=
-    if a = shared then z else if a = n then inv else if a = 0 then b0 else false
-  let before (z b4 b5 : Bool) := !(fBefore.eval (argBefore z b4 b5))
-  let after (b0 z inv : Bool) := fAfter.eval (argAfter b0 z inv)
-  have grows : PreservesGrowth wire := by
-    intro a b sub ha
-    have le := fShared.eval_le_of_signed_le a.testBit b.testBit (by
-      intro i s hs
-      rw [(useShared hs).1]
-      exact bit_le_of_mask sub i)
-    exact true_preserved le ha
-  have growsBefore : before false false true = true → before true false true = true := by
-    intro h
-    have le := fBefore.eval_le_of_signed_le (argBefore true false true) (argBefore false false true) (by
-      intro a s hp
-      rw [(useBefore hp).1]
-      by_cases same : a = shared <;> simp [argBefore, same])
-    exact not_true_reversed le h
-  have growsAfter : ∀ b0 z, after b0 z false = true → after b0 z true = true := by
-    intro b0 z h
-    have le := fAfter.eval_le_of_signed_le (argAfter b0 z false) (argAfter b0 z true) (by
-      intro a s hp
-      rw [(useAfter hp).1]
-      by_cases same : a = shared
-      · simp [argAfter, same]
-      · by_cases isN : a = n
-        · subst a
-          simp [argAfter, show n ≠ shared by omega]
-        · simp [argAfter, same, isN])
-    exact true_preserved le h
-  refine ⟨u0, u4, u5, wire, before, after, grows, growsBefore, growsAfter, ?_⟩
-  intro r _
-  let full (a : Nat) := (C.wires (inputRow r)).getD a false
-  let outside := restMask u0 u4 u5 &&& r
-  let z := wire (mask u0 u4 u5 &&& r)
-  have actualBit (a : Nat) (small : a < 6) : full a = r.testBit a := input_value C r a small
-  have cutSharedEval : fShared.eval full = full shared :=
+  let full (r a : Nat) := (C.wires (inputRow r)).getD a false
+  let z (r : Nat) := full r shared
+  let inv (r : Nat) := full r n
+  let out (r : Nat) := full r C.output
+  have zEval (r : Nat) : fShared.eval (full r) = z r :=
     eval_unfoldWithCuts C 6 (fun i => r.testBit i.val) (fun _ => false) shared support
-  have cutBeforeEval : fBefore.eval full = full n :=
+  have invEval (r : Nat) : fBefore.eval (full r) = inv r :=
     eval_unfoldWithCuts C 6 (fun i => r.testBit i.val) onlyShared n support
-  have cutAfterEval : fAfter.eval full = full C.output :=
+  have outEval (r : Nat) : fAfter.eval (full r) = out r :=
     eval_unfoldWithCuts C 6 (fun i => r.testBit i.val) both C.output support
-  have sharedEq : z = full shared := by
-    change fShared.eval (mask u0 u4 u5 &&& r).testBit = full shared
-    refine (fShared.eval_eq_of_support_eq _ _ ?_).trans cutSharedEval
+  have fit (r : Nat) (hr : r ∈ rows) : out r = target r :=
+    eval_promised_row C realizes hr
+  have zLe (r t : Nat)
+      (raw : ∀ a, a < 6 → a ≠ 3 → reach a → r.testBit a ≤ t.testBit a) : z r ≤ z t := by
+    rw [← zEval r, ← zEval t]
+    apply Formula.eval_le_of_signed_le
     intro a s hp
-    obtain ⟨_, small, ne3, hr⟩ := useShared hp
-    rw [actualBit a small]
-    apply mask_keeps
-    rcases ordinary small ne3 with rfl | rfl | rfl | rfl | rfl
-    · exact Or.inr (Or.inr (Or.inl ⟨rfl, by simp [u0, hr]⟩))
-    · exact Or.inl rfl
-    · exact Or.inr (Or.inl rfl)
-    · exact Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, by simp [u4, hr]⟩)))
-    · exact Or.inr (Or.inr (Or.inr (Or.inr ⟨rfl, by simp [u5, hr]⟩)))
-  have value0 (h : ¬ reach 0) : outside.testBit 0 = full 0 := by
-    rw [actualBit 0 (by decide)]
-    exact outside_keeps u0 u4 u5 r 0 (Or.inl ⟨rfl, by simp [u0, h]⟩)
-  have value4 (h : ¬ reach 4) : outside.testBit 4 = full 4 := by
-    rw [actualBit 4 (by decide)]
-    exact outside_keeps u0 u4 u5 r 4 (Or.inr (Or.inl ⟨rfl, by simp [u4, h]⟩))
-  have value5 (h : ¬ reach 5) : outside.testBit 5 = full 5 := by
-    rw [actualBit 5 (by decide)]
-    exact outside_keeps u0 u4 u5 r 5 (Or.inr (Or.inr ⟨rfl, by simp [u5, h]⟩))
-  have beforeEval : fBefore.eval (argBefore z (outside.testBit 4) (outside.testBit 5)) = full n := by
-    refine (fBefore.eval_eq_of_support_eq _ _ ?_).trans cutBeforeEval
+    obtain ⟨rfl, small, ne, reaches⟩ := useShared hp
+    simpa only [ite_true, full, input_value C r a small, input_value C t a small] using
+      raw a small ne reaches
+  have invLe (r t : Nat) (zs : z r ≤ z t)
+      (raw : ∀ a, a < 6 → a ≠ 3 → ¬ reach a → r.testBit a = t.testBit a) :
+      inv t ≤ inv r := by
+    rw [← invEval r, ← invEval t]
+    apply Formula.eval_le_of_signed_le
     intro a s hp
-    rcases (useBefore hp).2 with rfl | ⟨rfl, h⟩ | ⟨rfl, h⟩
-    · simp [argBefore, sharedEq]
-    · simp [argBefore, show (4 : Nat) ≠ shared by omega, value4 h]
-    · simp [argBefore, show (5 : Nat) ≠ shared by omega, value5 h]
-  have negEval : (!(before z (outside.testBit 4) (outside.testBit 5))) = full n := by
-    simp [before, beforeEval]
-  have afterEval : after (outside.testBit 0) z (full n) = full C.output := by
-    refine (fAfter.eval_eq_of_support_eq _ _ ?_).trans cutAfterEval
+    obtain ⟨rfl, ha | ⟨small, ne, avoids⟩⟩ := useBefore hp
+    · subst a
+      exact zs
+    · simp only [full, input_value C r a small, input_value C t a small]
+      exact le_of_eq (raw a small ne avoids)
+  have outLe (r t : Nat) (zs : z r ≤ z t) (ns : inv r ≤ inv t)
+      (raw : r.testBit 0 = t.testBit 0) : out r ≤ out t := by
+    rw [← outEval r, ← outEval t]
+    apply Formula.eval_le_of_signed_le
     intro a s hp
-    rcases (useAfter hp).2 with hs | hn | ⟨h0, h⟩
+    obtain ⟨rfl, ha | ha | ⟨ha, _⟩⟩ := useAfter hp
     · subst a
-      simp [argAfter, sharedEq]
+      exact zs
     · subst a
-      simp [argAfter, show n ≠ shared by omega]
+      exact ns
     · subst a
-      simp [argAfter, show (0 : Nat) ≠ shared by omega, show (0 : Nat) ≠ n by omega, value0 h]
-  change full C.output = after (outside.testBit 0) z (!(before z (outside.testBit 4) (outside.testBit 5)))
-  rw [negEval, afterEval]
-
-theorem no_six_gate_circuit :
-    ¬ (∃ C : Circuit, PEqualNP.MetaComplexity.FanInTwo C ∧ C.size ≤ 6 ∧ realizesGraph C) :=
-  refutation_of_factorization factor_candidate
+      simp only [ite_true, full, input_value C r 0 (by decide), input_value C t 0 (by decide)]
+      exact le_of_eq raw
+  have rawEq (r t : Nat)
+      (h : r.testBit 0 = t.testBit 0 ∧ r.testBit 4 = t.testBit 4 ∧
+        (¬ reach 5 → r.testBit 5 = t.testBit 5)) :
+      ∀ a, a < 6 → a ≠ 3 → ¬ reach a → r.testBit a = t.testBit a := by
+    intro a small ne avoids
+    rcases ordinary small ne with rfl | rfl | rfl | rfl | rfl
+    · exact h.1
+    · exact (avoids (bin 1 (by decide))).elim
+    · exact (avoids (bin 2 (by decide))).elim
+    · exact h.2.1
+    · exact h.2.2 avoids
+  have outEq (r t : Nat) (zs : z r = z t)
+      (raw : r.testBit 0 = t.testBit 0 ∧ r.testBit 4 = t.testBit 4 ∧
+        (¬ reach 5 → r.testBit 5 = t.testBit 5)) : out r = out t := by
+    have down := invLe r t (le_of_eq zs) (rawEq r t raw)
+    have up := invLe t r (le_of_eq zs.symm)
+      (fun a small ne avoids => (rawEq r t raw a small ne avoids).symm)
+    exact le_antisymm (outLe r t (le_of_eq zs) up raw.1)
+      (outLe t r (le_of_eq zs.symm) down raw.1.symm)
+  have h8 : out 8 = true := fit 8 (by decide)
+  have h18 : out 18 = false := fit 18 (by decide)
+  have h32 : out 32 = false := fit 32 (by decide)
+  have h34 : out 34 = true := fit 34 (by decide)
+  have z8le32 := zLe 8 32 (fun a small ne _ => by
+    rcases ordinary small ne with rfl | rfl | rfl | rfl | rfl <;> decide)
+  have z32le34 := zLe 32 34 (fun a small ne _ => by
+    rcases ordinary small ne with rfl | rfl | rfl | rfl | rfl <;> decide)
+  have different32_34 : z 32 ≠ z 34 := by
+    intro same
+    have eq := outEq 32 34 same ⟨by decide, by decide, fun _ => by decide⟩
+    simp [h32, h34] at eq
+  have z32 : z 32 = false := by
+    cases h : z 32
+    · rfl
+    · rw [h] at z32le34
+      exact (different32_34 (h.trans (Bool.eq_true_of_true_le z32le34).symm)).elim
+  have z34 : z 34 = true := by
+    cases h : z 34
+    · exact (different32_34 (z32.trans h.symm)).elim
+    · rfl
+  by_cases sharesFive : reach 5
+  · have same : z 8 = z 32 := (Bool.eq_false_of_le_false (z32 ▸ z8le32)).trans z32.symm
+    have eq := outEq 8 32 same ⟨by decide, by decide, fun avoids => (avoids sharesFive).elim⟩
+    simp [h8, h32] at eq
+  · have z8 : z 8 = false := Bool.eq_false_of_le_false (z32 ▸ z8le32)
+    have z34le18 := zLe 34 18 (fun a small ne reaches => by
+      rcases ordinary small ne with rfl | rfl | rfl | rfl | rfl
+      · decide
+      · decide
+      · decide
+      · decide
+      · exact (sharesFive reaches).elim)
+    have z18 : z 18 = true := Bool.eq_true_of_true_le (z34 ▸ z34le18)
+    have inv32 : inv 32 = false := by
+      cases h : inv 32
+      · rfl
+      · have upper : inv 8 ≤ inv 32 := by rw [h]; exact Bool.le_true _
+        have bad := outLe 8 32 (le_of_eq (z8.trans z32.symm)) upper (by decide)
+        exact ((by decide : ¬ (true ≤ false)) (by simpa only [h8, h32] using bad)).elim
+    have inv34 : inv 34 = true := by
+      cases h : inv 34
+      · have upper : inv 34 ≤ inv 18 := by rw [h]; exact Bool.false_le _
+        have bad := outLe 34 18 (le_of_eq (z34.trans z18.symm)) upper (by decide)
+        exact ((by decide : ¬ (true ≤ false)) (by simpa only [h34, h18] using bad)).elim
+      · rfl
+    have bad := invLe 32 34 z32le34 (rawEq 32 34 ⟨by decide, by decide, fun _ => by decide⟩)
+    exact (by decide : ¬ (true ≤ false)) (by simpa only [inv32, inv34] using bad)
 
 /-- The seven-gate upper-bound witness from the project desk. -/
 def sevenGateWitness : Circuit :=
